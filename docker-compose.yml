@@ -1,0 +1,29 @@
+services:
+  app:
+    image: ghcr.io/taronyuu/imferry:latest
+    restart: unless-stopped
+    ports:
+      - "47283:8080"
+    volumes:
+      - ./data:/var/www/html/database/data
+    environment:
+      APP_NAME: "Imferry"
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_URL: ${APP_URL:-http://localhost:47283}
+      APP_KEY: ${APP_KEY:?APP_KEY must be set. Generate with: docker run --rm serversideup/php:8.4-cli php -r "echo 'base64:'.base64_encode(random_bytes(32)).PHP_EOL;"}
+      DB_CONNECTION: sqlite
+      DB_DATABASE: /var/www/html/database/data/imferry.sqlite
+      SESSION_DRIVER: database
+      QUEUE_CONNECTION: database
+      CACHE_STORE: database
+      LOG_CHANNEL: stack
+      LOG_STACK: single
+      LOG_LEVEL: info
+      AUTORUN_ENABLED: "true"
+      AUTORUN_LARAVEL_MIGRATION: "true"
+      AUTORUN_LARAVEL_STORAGE_LINK: "true"
+      PHP_OPCACHE_ENABLE: "1"
+      SSL_MODE: "off"
+      PUID: ${PUID:-9999}
+      PGID: ${PGID:-9999}
