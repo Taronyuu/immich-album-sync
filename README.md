@@ -1,4 +1,4 @@
-# Imferry
+# Immich Album Sync
 
 Mirror an Immich shared album into your own Immich, on a schedule you control.
 
@@ -6,11 +6,11 @@ Mirror an Immich shared album into your own Immich, on a schedule you control.
 ![PHP 8.4+](https://img.shields.io/badge/PHP-8.4%2B-777BB4)
 ![Laravel 13](https://img.shields.io/badge/Laravel-13-FF2D20)
 
-Imferry is a small self-hosted companion to [Immich](https://immich.app). Point it at someone's shared album — yours or a friend's — and it keeps a mirror of that album in your own Immich, fully indexed by your existing setup (machine learning, faces, mobile sync, the lot). New photos in the source show up in your library on the next tick. Removed photos follow whichever policy you pick.
+Immich Album Sync is a small self-hosted companion to [Immich](https://immich.app). Point it at someone's shared album — yours or a friend's — and it keeps a mirror of that album in your own Immich, fully indexed by your existing setup (machine learning, faces, mobile sync, the lot). New photos in the source show up in your library on the next tick. Removed photos follow whichever policy you pick.
 
-Each user logs in with their **own Immich credentials**. Imferry never stores your password — it round-trips them once to provision a scoped API key on your Immich, encrypts that key at rest, and uses it for all sync work.
+Each user logs in with their **own Immich credentials**. Immich Album Sync never stores your password — it round-trips them once to provision a scoped API key on your Immich, encrypts that key at rest, and uses it for all sync work.
 
-> **Status: v0.1.0** — Phase 1 (Immich → Immich) is shipping. Phase 2 (Google Photos shared-link source) is on the roadmap.
+> **Status: v0.2.1** — Two-way sync against any Immich account is shipping. Phase 2 (Google Photos shared-link source) is on the roadmap.
 
 ---
 
@@ -19,19 +19,20 @@ Each user logs in with their **own Immich credentials**. Imferry never stores yo
 - **Mirror any Immich shared album.** Public links (with or without password) and API-key + album ID flows are both supported.
 - **Per-album cron schedule.** Every 15 minutes, hourly, daily — whatever you set.
 - **Run history with mid-run progress.** Every sync writes a `JobRun` row with structured logs, asset counts that update during the run, and a one-click re-run.
-- **Cross-album dedup.** If an asset already exists somewhere in your Immich (matched by checksum), Imferry just adds it to the mirror album without re-uploading.
+- **Cross-album dedup.** If an asset already exists somewhere in your Immich (matched by checksum), Immich Album Sync just adds it to the mirror album without re-uploading.
 - **Configurable delete policy.** When the source removes a photo: keep it in your album, take it out of just this album, or send it to your Immich trash.
+- **Two-way capable.** Connect to a remote Immich account and push your local additions back to its album, in addition to pulling.
 - **Multi-user.** Each user gets a scoped panel; they only see their own albums and runs.
 - **Single container.** One Docker image runs nginx + php-fpm + the scheduler + the queue worker, all under s6-overlay. No Redis, no Postgres, no microservices.
-- **SQLite-only state.** Everything Imferry knows lives in one file you can back up.
+- **SQLite-only state.** Everything Immich Album Sync knows lives in one file you can back up.
 
 ---
 
 ## Quick start (any Docker host)
 
 ```bash
-mkdir imferry && cd imferry
-curl -O https://raw.githubusercontent.com/Taronyuu/imferry/main/docker-compose.yml
+mkdir immich-album-sync && cd immich-album-sync
+curl -O https://raw.githubusercontent.com/Taronyuu/immich-album-sync/main/docker-compose.yml
 
 export APP_KEY="base64:$(openssl rand -base64 32)"
 docker compose up -d
@@ -39,13 +40,13 @@ docker compose up -d
 open http://localhost:47283
 ```
 
-That's the whole thing. Imferry creates the SQLite database on first boot, runs migrations, brings up the panel.
+That's the whole thing. Immich Album Sync creates the SQLite database on first boot, runs migrations, brings up the panel.
 
-If you'd rather pin a version, swap `:latest` for `:v0.1.0` in `docker-compose.yml`.
+If you'd rather pin a version, swap `:latest` for `:v0.2.1` in `docker-compose.yml`.
 
 ### About `APP_KEY`
 
-This is the encryption key Imferry uses to seal the per-user Immich API keys it stores. **Set it once and keep it.** If you lose it, all stored API keys become unreadable — every user just logs back in to re-provision and you're whole again, but it's an avoidable round trip.
+This is the encryption key Immich Album Sync uses to seal the per-user Immich API keys it stores. **Set it once and keep it.** If you lose it, all stored API keys become unreadable — every user just logs back in to re-provision and you're whole again, but it's an avoidable round trip.
 
 Persist it in a `.env` file next to `docker-compose.yml`:
 
@@ -65,12 +66,12 @@ The container runs as a non-root user (UID `9999` by default). If your `./data` 
 
 ## Run on TrueNAS as a Custom App
 
-1. **Create a dataset** for Imferry's persistent state:
+1. **Create a dataset** for Immich Album Sync's persistent state:
 
    ```
    Datasets → tank (or your pool) → Add Dataset
-   Name: imferry
-   Result: /mnt/tank/imferry
+   Name: immich-album-sync
+   Result: /mnt/tank/immich-album-sync
    ```
 
 2. **Generate an `APP_KEY`** on any machine, or use a throwaway container:
@@ -83,27 +84,27 @@ The container runs as a non-root user (UID `9999` by default). If your `./data` 
 3. **Apps → Discover Apps → Custom App**, paste the compose YAML below, and edit:
 
    - Replace `${APP_KEY}` with the key you generated.
-   - Set `APP_URL` to where you'll reach Imferry (e.g. `http://truenas.local:47283`, your Tailscale hostname, or a reverse-proxied domain).
-   - Set the volume host path to your dataset (e.g. `/mnt/tank/imferry`).
+   - Set `APP_URL` to where you'll reach the panel (e.g. `http://truenas.local:47283`, your Tailscale hostname, or a reverse-proxied domain).
+   - Set the volume host path to your dataset (e.g. `/mnt/tank/immich-album-sync`).
    - Set `PUID` and `PGID` to `568:568` (the TrueNAS `apps` user) so the container can write to the dataset.
 
    ```yaml
    services:
      app:
-       image: ghcr.io/taronyuu/imferry:latest
+       image: ghcr.io/taronyuu/immich-album-sync:latest
        restart: unless-stopped
        ports:
          - "47283:8080"
        volumes:
-         - /mnt/tank/imferry:/var/www/html/database/data
+         - /mnt/tank/immich-album-sync:/var/www/html/database/data
        environment:
-         APP_NAME: "Imferry"
+         APP_NAME: "Immich Album Sync"
          APP_ENV: production
          APP_DEBUG: "false"
          APP_URL: http://truenas.local:47283
          APP_KEY: "<paste your generated key>"
          DB_CONNECTION: sqlite
-         DB_DATABASE: /var/www/html/database/data/imferry.sqlite
+         DB_DATABASE: /var/www/html/database/data/immich-album-sync.sqlite
          SESSION_DRIVER: database
          QUEUE_CONNECTION: database
          CACHE_STORE: database
@@ -120,7 +121,7 @@ The container runs as a non-root user (UID `9999` by default). If your `./data` 
 
 5. **Browse to it** and log in with your Immich URL + email + password.
 
-> HTTPS is intentionally out of scope. Tailnet users have transport encryption already; LAN users can front Imferry with TrueNAS's built-in reverse proxy or any ingress they already run.
+> HTTPS is intentionally out of scope. Tailnet users have transport encryption already; LAN users can front the panel with TrueNAS's built-in reverse proxy or any ingress they already run.
 
 ---
 
@@ -128,9 +129,9 @@ The container runs as a non-root user (UID `9999` by default). If your `./data` 
 
 When you log in:
 
-1. Imferry calls `POST /api/auth/login` on the Immich URL you provided, with your email and password.
-2. On success, Imferry creates (or fetches) a local user record keyed off `(immich_base_url, immich_user_id)`.
-3. **First login only** — Imferry calls `POST /api/api-keys` on your Immich, with your access token, to provision a scoped key named *"Imferry (auto-provisioned)"* with these eight permissions:
+1. Immich Album Sync calls `POST /api/auth/login` on the Immich URL you provided, with your email and password.
+2. On success, a local user record is created (or fetched) keyed off `(immich_base_url, immich_user_id)`.
+3. **First login only** — `POST /api/api-keys` provisions a scoped key named *"Immich Album Sync (auto-provisioned)"* on your Immich, with these eight permissions:
 
    `asset.upload`, `asset.read`, `asset.download`, `album.create`, `album.read`, `album.update`, `albumAsset.create`, `albumAsset.delete`
 
@@ -142,17 +143,18 @@ You can revoke the key any time from Immich's "API Keys" page. The next sync wil
 
 ## Creating a sync
 
-The fastest way is the **Quick Add** card on the dashboard: paste a shared-link URL like `https://your-immich.example.com/share/AbCdEf-...`, hit save, and Imferry pre-fills the album from the link. The new album lands inactive — you can fill in the share password (if any) and confirm the schedule before flipping it on.
+The fastest way is the **Quick Add** card on the dashboard: paste a shared-link URL like `https://your-immich.example.com/share/AbCdEf-...`, hit save, and the album form is pre-filled from the link. The new album lands inactive — you can fill in the share password (if any) and confirm the schedule before flipping it on.
 
 If you'd rather configure manually, the **Albums** page has a full form:
 
 | Field | What it means |
 |---|---|
-| **Source: Another Immich · public shared link** | Paste the share key (the random string from a public album link). Optional password if the link is password-protected. |
-| **Source: Another Immich · API key + album ID** | Paste an API key on the *source* Immich and the album UUID. Useful for albums you can already log in to. |
+| **Source: Public shared link** | Paste the share key (the random string from a public album link). Optional password if the link is password-protected. Read-only — `direction` must be `pull`. |
+| **Source: Connected Immich account** | Enter the remote URL + your email + password and click Connect; an API key is auto-provisioned and stored encrypted. Read+write capable. |
+| **Sync direction** | `Pull` (default), `Push`, or `Two-way`. Push and Two-way are only available for the connected-account source. |
 | **Schedule** | Cron expression (default `*/15 * * * *`). |
 | **Target album name** | The local album that will be created (lazily, on first sync) and continually updated. |
-| **When source removes a photo** | `remove-from-album` (default), `trash`, or `ignore`. |
+| **When source removes a photo** | `remove-from-album` (default), `trash`, or `ignore`. Applies to the pull direction; deletes are never propagated outward in v0.2.x. |
 
 Click **Run now** on a row to dispatch immediately instead of waiting for the next tick.
 
@@ -171,7 +173,7 @@ Your data volume (`./data` or the TrueNAS dataset) is preserved across updates. 
 
 ## Backup
 
-Everything stateful — albums, mappings, run history, sessions, queued jobs, encrypted API keys — lives in one SQLite file at `<your-data-dir>/imferry.sqlite`. Back up that directory like any other.
+Everything stateful — albums, mappings, run history, sessions, queued jobs, encrypted API keys — lives in one SQLite file at `<your-data-dir>/immich-album-sync.sqlite`. Back up that directory like any other.
 
 ---
 
@@ -209,7 +211,7 @@ The dev compose runs three sibling containers (app, scheduler, queue) with a bin
 php artisan test
 ```
 
-15 tests, 36 assertions covering the auth flow, sync engine, album scoping, and share-URL parsing.
+26 tests, 69 assertions covering the auth flow, sync engine (pull + push passes), album scoping, share-URL parsing, and the remote-account connector.
 
 Useful Artisan commands inside the dev container:
 
@@ -223,9 +225,9 @@ php artisan sync:run --all                 # ignore schedule, dispatch every act
 
 ## Roadmap
 
-- **Phase 1 (now)** — Immich → Immich shared albums, with public-link, password-protected-link, and API-key sources. Done.
+- **Phase 1 (now)** — Immich → Immich shared albums, with public-link, password-protected-link, and connected-account sources, including two-way sync. Done.
 - **Phase 2** — Google Photos shared-link source via public-page scraping. (Google deprecated the OAuth API for shared albums in 2025; scraping is the only viable path.)
-- **Future** — anything that proves itself useful: notifications on failure, public Immich → public Immich proxying, etc.
+- **Future** — anything that proves itself useful: notifications on failure, conflict policies for two-way sync, etc.
 
 ---
 

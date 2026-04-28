@@ -235,7 +235,7 @@ class SyncEngine
     private function downloadFromTargetAndUploadToSource(Album $album, ImmichClient $target, WritableSourceBackend $source, array $asset): ?string
     {
         $localId = $asset['id'];
-        $tempPath = tempnam(sys_get_temp_dir(), 'imferry-push-');
+        $tempPath = tempnam(sys_get_temp_dir(), 'immich-album-sync-push-');
 
         if ($tempPath === false) {
             throw new \RuntimeException('Cannot allocate temp file for push');
@@ -254,8 +254,8 @@ class SyncEngine
                 checksumSha1: $checksum,
                 fileCreatedAt: $createdAt,
                 fileModifiedAt: $modifiedAt,
-                deviceAssetId: 'imferry-push-' . $album->id . '-' . $localId,
-                deviceId: 'imferry',
+                deviceAssetId: 'immich-album-sync-push-' . $album->id . '-' . $localId,
+                deviceId: 'immich-album-sync',
             );
 
             return $response['id'] ?? null;
@@ -364,8 +364,8 @@ class SyncEngine
                 checksumSha1: $checksum,
                 fileCreatedAt: $createdAt,
                 fileModifiedAt: $modifiedAt,
-                deviceAssetId: 'imferry-' . $album->id . '-' . $asset->remoteId,
-                deviceId: 'imferry',
+                deviceAssetId: 'immich-album-sync-' . $album->id . '-' . $asset->remoteId,
+                deviceId: 'immich-album-sync',
             );
 
             return $response['id'] ?? null;

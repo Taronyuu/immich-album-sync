@@ -26,7 +26,7 @@ class AdminPanelProvider extends PanelProvider
             ->default()
             ->id('admin')
             ->path('')
-            ->brandName('Imferry')
+            ->brandName('Immich Album Sync')
             ->login(ImmichLogin::class)
             ->colors([
                 'primary' => Color::Indigo,

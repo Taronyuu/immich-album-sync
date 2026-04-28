@@ -122,8 +122,8 @@ class ImmichClient
                 ->withHeaders(['x-immich-checksum' => $checksumSha1])
                 ->attach('assetData', $stream, $filename)
                 ->post($this->url('/api/assets'), [
-                    'deviceAssetId' => $deviceAssetId ?? ('imferry-' . sha1($filename . $checksumSha1)),
-                    'deviceId' => $deviceId ?? 'imferry',
+                    'deviceAssetId' => $deviceAssetId ?? ('immich-album-sync-' . sha1($filename . $checksumSha1)),
+                    'deviceId' => $deviceId ?? 'immich-album-sync',
                     'fileCreatedAt' => $fileCreatedAt,
                     'fileModifiedAt' => $fileModifiedAt,
                 ])
@@ -150,6 +150,11 @@ class ImmichClient
     public function listMyAlbums(): array
     {
         return $this->request()->get($this->url('/api/albums'))->throw()->json();
+    }
+
+    public function listSharedAlbums(): array
+    {
+        return $this->request()->get($this->url('/api/albums'), ['shared' => 'true'])->throw()->json();
     }
 
     public function addAssetsToAlbum(string $albumId, array $assetIds): array

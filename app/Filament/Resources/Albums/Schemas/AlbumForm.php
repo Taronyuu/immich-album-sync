@@ -159,11 +159,12 @@ class AlbumForm
                                     ->required(fn ($get) => $get('source_type') === Album::SOURCE_API_KEY)
                                     ->searchable()
                                     ->options(self::loadRemoteAlbumOptions(...))
-                                    ->helperText('Pick from albums available on the remote. If the list is empty, connect first or check the API key.')
+                                    ->helperText('Pick from albums available on the remote (owned + shared with you). If empty, connect first or check the API key.')
                                     ->columnSpanFull(),
 
-                                Hidden('source_account_email'),
-                                Hidden('source_account_user_id'),
+                                Hidden::make('source_account_email'),
+                                Hidden::make('source_account_user_id'),
+                                Hidden::make('_remote_albums')->dehydrated(false),
 
                                 Section::make('Advanced: paste an existing API key')
                                     ->visible(fn ($get) => $get('source_type') === Album::SOURCE_API_KEY)
@@ -232,9 +233,13 @@ class AlbumForm
         $set('source_account_user_id', $connection->immichUserId);
         $set('_connect_password', null);
 
+        $albums = self::fetchRemoteAlbums($connection->baseUrl, $connection->apiKeySecret);
+        $set('_remote_albums', $albums);
+        $set('source_album_id', null);
+
         Notification::make()
             ->title('Connected')
-            ->body('Provisioned a scoped API key as ' . $connection->email . '. Pick a remote album below.')
+            ->body('Provisioned a scoped API key as ' . $connection->email . '. ' . count($albums) . ' album(s) available — pick one below.')
             ->success()
             ->send();
     }
@@ -244,6 +249,11 @@ class AlbumForm
      */
     private static function loadRemoteAlbumOptions(callable $get): array
     {
+        $cached = $get('_remote_albums');
+        if (is_array($cached) && ! empty($cached)) {
+            return $cached;
+        }
+
         $baseUrl = (string) ($get('source_base_url') ?? '');
         $apiKey = (string) ($get('source_api_key') ?? '');
 
@@ -251,15 +261,33 @@ class AlbumForm
             return [];
         }
 
+        return self::fetchRemoteAlbums($baseUrl, $apiKey);
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private static function fetchRemoteAlbums(string $baseUrl, string $apiKey): array
+    {
         try {
-            $albums = ImmichClient::withApiKey($baseUrl, $apiKey)->listMyAlbums();
+            $client = ImmichClient::withApiKey($baseUrl, $apiKey);
+            $owned = $client->listMyAlbums();
+            $shared = $client->listSharedAlbums();
         } catch (\Throwable) {
             return [];
         }
 
-        return collect($albums)
-            ->mapWithKeys(fn (array $a) => [$a['id'] => $a['albumName'] ?? $a['id']])
-            ->all();
+        $byId = [];
+        foreach ($owned as $a) {
+            if (! isset($a['id'])) continue;
+            $byId[$a['id']] = $a['albumName'] ?? $a['id'];
+        }
+        foreach ($shared as $a) {
+            if (! isset($a['id']) || isset($byId[$a['id']])) continue;
+            $byId[$a['id']] = ($a['albumName'] ?? $a['id']) . ' (shared)';
+        }
+
+        return $byId;
     }
 
     public static function splitSharedLinkUrl(?string $state, callable $set): void

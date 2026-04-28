@@ -7,6 +7,7 @@
 /database/*.sqlite-journal
 /database/data/
 /data/
+/.playwright-mcp/
 .phpactor.json
 .phpunit.result.cache
 /.codex

@@ -15,5 +15,5 @@ final class ImmichPermissions
         'albumAsset.delete',
     ];
 
-    public const AUTO_PROVISION_KEY_NAME = 'Imferry (auto-provisioned)';
+    public const AUTO_PROVISION_KEY_NAME = 'Immich Album Sync (auto-provisioned)';
 }

@@ -4,7 +4,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-IMAGE="ghcr.io/taronyuu/imferry"
+IMAGE="ghcr.io/taronyuu/immich-album-sync"
 VERSION="$(cat VERSION)"
 PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"
 BUILDER="${BUILDER:-multiarch-builder}"

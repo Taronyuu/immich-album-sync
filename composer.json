@@ -1,6 +1,6 @@
 {
     "$schema": "https://getcomposer.org/schema.json",
-    "name": "imferry/imferry",
+    "name": "taronyuu/immich-album-sync",
     "type": "project",
     "description": "Mirror Immich shared albums into your own Immich.",
     "keywords": ["immich", "photos", "sync", "self-hosted"],

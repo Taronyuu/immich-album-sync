@@ -1,0 +1,99 @@
+name: immich-album-sync-e2e
+
+x-immich-server-base: &immich-server-base
+  image: ghcr.io/immich-app/immich-server:v2.7.5
+  restart: unless-stopped
+  healthcheck:
+    disable: true
+  environment: &immich-env
+    DB_USERNAME: postgres
+    DB_PASSWORD: postgres
+    DB_DATABASE_NAME: immich
+    IMMICH_MACHINE_LEARNING_ENABLED: "false"
+    IMMICH_TELEMETRY_INCLUDE: ""
+    IMMICH_LOG_LEVEL: warn
+
+x-postgres-base: &postgres-base
+  image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
+  restart: unless-stopped
+  environment:
+    POSTGRES_PASSWORD: postgres
+    POSTGRES_USER: postgres
+    POSTGRES_DB: immich
+    POSTGRES_INITDB_ARGS: '--data-checksums'
+  shm_size: 128mb
+  healthcheck:
+    test: pg_isready -U postgres
+    interval: 5s
+    timeout: 5s
+    retries: 30
+
+x-redis-base: &redis-base
+  image: docker.io/valkey/valkey:9
+  restart: unless-stopped
+  healthcheck:
+    test: redis-cli ping || exit 1
+    interval: 5s
+    timeout: 3s
+    retries: 12
+
+services:
+  immich-alpha:
+    <<: *immich-server-base
+    container_name: immich-album-sync-e2e-alpha
+    environment:
+      <<: *immich-env
+      DB_HOSTNAME: db-alpha
+      REDIS_HOSTNAME: redis-alpha
+    ports:
+      - "2283:2283"
+    volumes:
+      - alpha-upload:/data
+    depends_on:
+      db-alpha:
+        condition: service_healthy
+      redis-alpha:
+        condition: service_healthy
+
+  redis-alpha:
+    <<: *redis-base
+    container_name: immich-album-sync-e2e-redis-alpha
+
+  db-alpha:
+    <<: *postgres-base
+    container_name: immich-album-sync-e2e-db-alpha
+    volumes:
+      - alpha-db:/var/lib/postgresql/data
+
+  immich-beta:
+    <<: *immich-server-base
+    container_name: immich-album-sync-e2e-beta
+    environment:
+      <<: *immich-env
+      DB_HOSTNAME: db-beta
+      REDIS_HOSTNAME: redis-beta
+    ports:
+      - "2284:2283"
+    volumes:
+      - beta-upload:/data
+    depends_on:
+      db-beta:
+        condition: service_healthy
+      redis-beta:
+        condition: service_healthy
+
+  redis-beta:
+    <<: *redis-base
+    container_name: immich-album-sync-e2e-redis-beta
+
+  db-beta:
+    <<: *postgres-base
+    container_name: immich-album-sync-e2e-db-beta
+    volumes:
+      - beta-db:/var/lib/postgresql/data
+
+volumes:
+  alpha-upload:
+  alpha-db:
+  beta-upload:
+  beta-db:

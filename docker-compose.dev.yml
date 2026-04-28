@@ -1,6 +1,6 @@
 x-app: &app
   build: .
-  image: imferry:local
+  image: immich-album-sync:local
   restart: unless-stopped
   volumes:
     - ./:/var/www/html
