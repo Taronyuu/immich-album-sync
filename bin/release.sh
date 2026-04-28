@@ -19,19 +19,21 @@ if ! docker buildx inspect "${BUILDER}" >/dev/null 2>&1; then
     docker buildx create --name "${BUILDER}" --driver docker-container --bootstrap
 fi
 
+TAG="v${VERSION}"
+
 if [[ "${1:-}" == "--push" ]]; then
-    echo "Building and pushing ${IMAGE}:${VERSION} + :latest for ${PLATFORMS}"
+    echo "Building and pushing ${IMAGE}:${TAG} + :latest for ${PLATFORMS}"
     docker buildx build \
         --builder "${BUILDER}" \
         --platform "${PLATFORMS}" \
-        --tag "${IMAGE}:${VERSION}" \
+        --tag "${IMAGE}:${TAG}" \
         --tag "${IMAGE}:latest" \
         --push \
         .
 else
-    echo "Building ${IMAGE}:${VERSION} for the host platform only (use --push for multi-arch + push)"
+    echo "Building ${IMAGE}:${TAG} for the host platform only (use --push for multi-arch + push)"
     docker build \
-        --tag "${IMAGE}:${VERSION}" \
+        --tag "${IMAGE}:${TAG}" \
         --tag "${IMAGE}:latest" \
         .
 fi
