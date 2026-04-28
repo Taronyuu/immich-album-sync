@@ -1,7 +1,10 @@
 FROM serversideup/php:8.4-fpm-nginx
 
 USER root
-RUN install-php-extensions intl
+RUN install-php-extensions intl \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends git unzip \
+ && rm -rf /var/lib/apt/lists/*
 
 COPY --chown=www-data:www-data . /var/www/html
 WORKDIR /var/www/html
