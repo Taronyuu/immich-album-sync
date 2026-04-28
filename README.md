@@ -171,6 +171,114 @@ Your data volume (`./data` or the TrueNAS dataset) is preserved across updates. 
 
 ---
 
+## Using Postgres or MySQL instead of SQLite
+
+SQLite is the default and what the included `docker-compose.yml` uses — it's the simplest option (zero extra services, one file backup). If you'd rather run Postgres or MySQL — say, to share a database server you already operate — Laravel and Imferry both support it without code changes. Set the right env vars and migrations run against your engine.
+
+The container ships with `pdo_sqlite`, `pdo_pgsql`, and `pdo_mysql` already enabled.
+
+### Postgres
+
+Add a Postgres service alongside the app and point Imferry at it. Minimal extra block in `docker-compose.yml`:
+
+```yaml
+services:
+  app:
+    image: ghcr.io/taronyuu/immich-album-sync:latest
+    # ... ports, volumes, restart, etc., as usual ...
+    environment:
+      APP_KEY: ${APP_KEY}
+      DB_CONNECTION: pgsql
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_DATABASE: immich_album_sync
+      DB_USERNAME: immich_album_sync
+      DB_PASSWORD: ${DB_PASSWORD}
+      SESSION_DRIVER: database
+      QUEUE_CONNECTION: database
+      CACHE_STORE: database
+      AUTORUN_LARAVEL_MIGRATION: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: immich_album_sync
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: immich_album_sync
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: pg_isready -U immich_album_sync
+      interval: 5s
+      timeout: 5s
+      retries: 12
+```
+
+Drop the `volumes: ./data:/var/www/html/database/data` and `DB_DATABASE: …/immich-album-sync.sqlite` lines from the SQLite-based example — they're not needed when Postgres is the store.
+
+### MySQL
+
+Same shape, just swap the engine:
+
+```yaml
+services:
+  app:
+    # ... as above, but ...
+    environment:
+      DB_CONNECTION: mysql
+      DB_HOST: db
+      DB_PORT: 3306
+      # ... rest unchanged ...
+
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: immich_album_sync
+      MYSQL_USER: immich_album_sync
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - ./mysqldata:/var/lib/mysql
+    healthcheck:
+      test: mysqladmin -uimmich_album_sync -p${DB_PASSWORD} ping
+      interval: 5s
+      timeout: 5s
+      retries: 12
+```
+
+### Migrating from SQLite to Postgres/MySQL
+
+The schema is identical across engines, so you can move data with any tool that handles cross-engine SQLite → Postgres dumps (e.g. `pgloader`, or `sqlite3 .dump | psql` for a manual approach if you're handy with regex). The encrypted columns survive verbatim as long as `APP_KEY` doesn't change.
+
+For a clean slate (preserving nothing): point at the new database, let `AUTORUN_LARAVEL_MIGRATION=true` create the schema, and have each user log in to re-provision their Immich API key.
+
+### Verifying
+
+The repo ships two phpunit configurations for engine-specific test runs:
+
+```bash
+php artisan test --configuration=phpunit.pgsql.xml   # 26 tests against Postgres
+php artisan test --configuration=phpunit.mysql.xml   # 26 tests against MySQL
+php artisan test                                     # default: SQLite in-memory
+```
+
+These expect a database listening on the host ports `54330` (Postgres) / `33060` (MySQL) with credentials `imferry/imferry` and a database named `imferry_test`. Spin one up with:
+
+```bash
+docker run -d --name immich-album-sync-pgsql-test \
+  -e POSTGRES_USER=imferry -e POSTGRES_PASSWORD=imferry \
+  -e POSTGRES_DB=imferry -p 54330:5432 \
+  postgres:16-alpine
+docker exec immich-album-sync-pgsql-test \
+  psql -U imferry -d imferry -c 'CREATE DATABASE imferry_test;'
+```
+
+---
+
 ## Backup
 
 Everything stateful — albums, mappings, run history, sessions, queued jobs, encrypted API keys — lives in one SQLite file at `<your-data-dir>/immich-album-sync.sqlite`. Back up that directory like any other.
