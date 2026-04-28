@@ -1,7 +1,12 @@
 FROM serversideup/php:8.4-fpm-nginx
 
+ARG USER_ID=33
+ARG GROUP_ID=33
+
 USER root
-RUN install-php-extensions intl \
+RUN docker-php-serversideup-set-id www-data "${USER_ID}:${GROUP_ID}" \
+ && docker-php-serversideup-set-file-permissions --owner "${USER_ID}:${GROUP_ID}" --service nginx \
+ && install-php-extensions intl \
  && apt-get update \
  && apt-get install -y --no-install-recommends git unzip \
  && rm -rf /var/lib/apt/lists/*

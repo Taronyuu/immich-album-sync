@@ -25,5 +25,3 @@ services:
       AUTORUN_LARAVEL_STORAGE_LINK: "true"
       PHP_OPCACHE_ENABLE: "1"
       SSL_MODE: "off"
-      PUID: ${PUID:-9999}
-      PGID: ${PGID:-9999}

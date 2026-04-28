@@ -57,10 +57,22 @@ docker compose up -d
 
 ### Permissions on Linux hosts
 
-The container runs as a non-root user (UID `9999` by default). If your `./data` directory is owned by a different UID, the container can't write the SQLite file on first boot. Two fixes:
+The container runs as `www-data` — UID `33` and GID `33` — baked into the image. If your `./data` directory is owned by a different UID, the container can't write the SQLite file on first boot. Two fixes:
 
-- **Set `PUID` and `PGID`** to match your host user in `docker-compose.yml` (or `.env`).
-- **Or** `sudo chown -R 9999:9999 ./data` once after creation.
+- **`sudo chown -R 33:33 ./data`** once after creation. Simplest for most hosts.
+- **Or build the image with your own UID/GID** (see [Building with a custom UID/GID](#building-with-a-custom-uidgid) below). Useful when the host has a fixed UID you can't change (e.g. TrueNAS apps user `568`, Kubernetes pod `securityContext.runAsUser`).
+
+### Building with a custom UID/GID
+
+```bash
+git clone https://github.com/Taronyuu/immich-album-sync.git
+cd immich-album-sync
+docker build --build-arg USER_ID=568 --build-arg GROUP_ID=568 -t immich-album-sync:custom .
+```
+
+Then point your `docker-compose.yml` at `image: immich-album-sync:custom` instead of the published `ghcr.io/...` tag. The `www-data` user inside the container is remapped to the UID/GID you passed, and `/etc/nginx`, `/var/www`, and friends are chowned to match.
+
+If you run the container under Kubernetes with `securityContext.runAsUser` set to anything other than `33`, you **must** build with matching `USER_ID` / `GROUP_ID` build args — otherwise the nginx config init will fail with `cannot create /etc/nginx/nginx.conf: Permission denied`.
 
 ---
 
@@ -81,12 +93,19 @@ The container runs as a non-root user (UID `9999` by default). If your `./data` 
      php -r "echo 'base64:'.base64_encode(random_bytes(32)).PHP_EOL;"
    ```
 
-3. **Apps → Discover Apps → Custom App**, paste the compose YAML below, and edit:
+3. **`chown` the dataset to UID `33`** so the container's `www-data` user can write the SQLite file:
+
+   ```bash
+   sudo chown -R 33:33 /mnt/tank/immich-album-sync
+   ```
+
+   If your TrueNAS deployment forces apps to run as UID `568` (TrueCharts and similar wrappers do this), the published image won't work — you need to build a custom image with `--build-arg USER_ID=568 --build-arg GROUP_ID=568` and push it to a registry the cluster can pull from. See [Building with a custom UID/GID](#building-with-a-custom-uidgid).
+
+4. **Apps → Discover Apps → Custom App**, paste the compose YAML below, and edit:
 
    - Replace `${APP_KEY}` with the key you generated.
    - Set `APP_URL` to where you'll reach the panel (e.g. `http://truenas.local:47283`, your Tailscale hostname, or a reverse-proxied domain).
    - Set the volume host path to your dataset (e.g. `/mnt/tank/immich-album-sync`).
-   - Set `PUID` and `PGID` to `568:568` (the TrueNAS `apps` user) so the container can write to the dataset.
 
    ```yaml
    services:
@@ -113,8 +132,6 @@ The container runs as a non-root user (UID `9999` by default). If your `./data` 
          AUTORUN_LARAVEL_STORAGE_LINK: "true"
          PHP_OPCACHE_ENABLE: "1"
          SSL_MODE: "off"
-         PUID: "568"
-         PGID: "568"
    ```
 
 4. **Save.** TrueNAS pulls the image, runs migrations on first boot via `AUTORUN_LARAVEL_MIGRATION`, and exposes the panel on `:47283`.
