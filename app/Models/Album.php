@@ -13,10 +13,13 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
     'name',
     'schedule',
     'source_type',
+    'direction',
     'source_base_url',
     'source_share_key',
     'source_share_password',
     'source_api_key',
+    'source_account_email',
+    'source_account_user_id',
     'source_album_id',
     'target_album_name',
     'target_album_id',
@@ -28,6 +31,13 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 ])]
 class Album extends Model
 {
+    public const DIRECTION_PULL = 'pull';
+    public const DIRECTION_PUSH = 'push';
+    public const DIRECTION_BOTH = 'both';
+
+    public const SOURCE_SHARED_LINK = 'immich-shared-link';
+    public const SOURCE_API_KEY = 'immich-api-key';
+
     protected function casts(): array
     {
         return [

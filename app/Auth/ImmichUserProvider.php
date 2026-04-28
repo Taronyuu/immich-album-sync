@@ -3,15 +3,19 @@
 namespace App\Auth;
 
 use App\Models\User;
-use App\Sync\ImmichClient;
-use App\Sync\ImmichPermissions;
+use App\Services\Exceptions\RemoteImmichConnectException;
+use App\Services\RemoteImmichConnector;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Auth\UserProvider;
-use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Log;
 
 class ImmichUserProvider implements UserProvider
 {
+    public function __construct(
+        private readonly RemoteImmichConnector $connector = new RemoteImmichConnector(),
+        private readonly ImmichApiKeyProvisioner $provisioner = new ImmichApiKeyProvisioner(),
+    ) {}
+
     public function retrieveById($identifier): ?Authenticatable
     {
         return User::query()->find($identifier);
@@ -39,36 +43,25 @@ class ImmichUserProvider implements UserProvider
 
     public function retrieveByCredentials(array $credentials): ?Authenticatable
     {
-        $baseUrl = trim((string) ($credentials['immich_base_url'] ?? ''));
-        $email = trim((string) ($credentials['email'] ?? ''));
+        $baseUrl = (string) ($credentials['immich_base_url'] ?? '');
+        $email = (string) ($credentials['email'] ?? '');
         $password = (string) ($credentials['password'] ?? '');
 
-        if ($baseUrl === '' || $email === '' || $password === '') {
-            return null;
-        }
-
         try {
-            $loginPayload = ImmichClient::anonymous($baseUrl)->login($email, $password);
-        } catch (RequestException $e) {
+            $loginPayload = $this->connector->login($baseUrl, $email, $password);
+        } catch (RemoteImmichConnectException $e) {
             Log::info('Immich login failed', [
                 'immich_base_url' => $baseUrl,
                 'email' => $email,
-                'status' => $e->response?->status(),
+                'message' => $e->getMessage(),
             ]);
 
             return null;
         }
 
-        $accessToken = $loginPayload['accessToken'] ?? null;
-        $immichUserId = $loginPayload['userId'] ?? null;
-
-        if ($accessToken === null || $immichUserId === null) {
-            return null;
-        }
-
         $user = User::query()->firstOrNew([
-            'immich_base_url' => $baseUrl,
-            'immich_user_id' => $immichUserId,
+            'immich_base_url' => $loginPayload['baseUrl'],
+            'immich_user_id' => $loginPayload['userId'],
         ]);
 
         $user->immich_email = $loginPayload['userEmail'] ?? $email;
@@ -77,8 +70,7 @@ class ImmichUserProvider implements UserProvider
         $user->last_login_at = now();
 
         if (empty($user->immich_api_key_encrypted)) {
-            $provisioner = new ImmichApiKeyProvisioner();
-            $apiKey = $provisioner->provision($baseUrl, $accessToken);
+            $apiKey = $this->provisioner->provision($loginPayload['baseUrl'], $loginPayload['accessToken']);
             $user->immich_api_key_id = $apiKey['id'];
             $user->immich_api_key = $apiKey['secret'];
         }

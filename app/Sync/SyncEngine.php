@@ -8,6 +8,7 @@ use App\Models\Mapping;
 use App\Sync\DTO\RemoteAsset;
 use App\Sync\Sources\SourceBackend;
 use App\Sync\Sources\SourceFactory;
+use App\Sync\Sources\WritableSourceBackend;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\DB;
 
@@ -35,17 +36,15 @@ class SyncEngine
             $logger->info("Sync started for album «{$album->name}»", [
                 'source_type' => $album->source_type,
                 'source_base_url' => $album->source_base_url,
+                'direction' => $album->direction ?? Album::DIRECTION_PULL,
             ]);
 
             $this->executeSync($album, $run, $logger, $report);
 
+            $this->persistRunCounts($run, $report);
             $run->update([
                 'status' => JobRun::STATUS_SUCCEEDED,
                 'finished_at' => now(),
-                'uploaded_count' => $report->uploaded,
-                'deduped_count' => $report->deduped,
-                'removed_count' => $report->removed,
-                'failed_count' => $report->failed,
             ]);
 
             $album->update([
@@ -62,14 +61,11 @@ class SyncEngine
             $logger->error('Sync failed: ' . $e->getMessage());
             $logger->flush();
 
+            $this->persistRunCounts($run, $report);
             $run->update([
                 'status' => JobRun::STATUS_FAILED,
                 'finished_at' => now(),
                 'error_message' => substr($e->getMessage(), 0, 1000),
-                'uploaded_count' => $report->uploaded,
-                'deduped_count' => $report->deduped,
-                'removed_count' => $report->removed,
-                'failed_count' => $report->failed,
             ]);
 
             $album->update([
@@ -88,6 +84,23 @@ class SyncEngine
 
         $albumId = $this->ensureAlbum($album, $target, $logger);
 
+        $direction = $album->direction ?: Album::DIRECTION_PULL;
+
+        if (in_array($direction, [Album::DIRECTION_PULL, Album::DIRECTION_BOTH], true)) {
+            $this->executePullPass($album, $run, $logger, $source, $target, $albumId, $report);
+        }
+
+        if (in_array($direction, [Album::DIRECTION_PUSH, Album::DIRECTION_BOTH], true)) {
+            if ($source instanceof WritableSourceBackend) {
+                $this->executePushPass($album, $run, $logger, $source, $target, $albumId, $report);
+            } else {
+                $logger->warn('Push direction requested but source is read-only; skipping push pass');
+            }
+        }
+    }
+
+    private function executePullPass(Album $album, JobRun $run, RunLogger $logger, SourceBackend $source, ImmichClient $target, string $albumId, SyncReport $report): void
+    {
         $logger->info('Listing assets from source...');
         $remoteAssets = [];
         foreach ($source->listAssets() as $asset) {
@@ -125,7 +138,132 @@ class SyncEngine
         }
 
         $this->applyDeletePolicy($album, $logger, $target, $albumId, $existingMappings, $remoteAssets, $report);
-        $this->persistRunCounts($run, $report);
+    }
+
+    private function executePushPass(Album $album, JobRun $run, RunLogger $logger, WritableSourceBackend $source, ImmichClient $target, string $targetAlbumId, SyncReport $report): void
+    {
+        $logger->info('Push pass: listing target album assets');
+
+        $targetAlbum = $target->getAlbum($targetAlbumId);
+        $localAssets = $targetAlbum['assets'] ?? [];
+        $logger->info('Target album has ' . count($localAssets) . ' asset(s)');
+
+        $existingLocalIds = Mapping::query()
+            ->where('album_id', $album->id)
+            ->pluck('local_asset_id')
+            ->flip();
+
+        $candidates = collect($localAssets)
+            ->reject(fn (array $a) => isset($existingLocalIds[$a['id'] ?? '']))
+            ->values()
+            ->all();
+
+        $logger->info(count($candidates) . ' local asset(s) eligible to push');
+
+        if (empty($candidates)) {
+            return;
+        }
+
+        $bulkPayload = [];
+        foreach ($candidates as $asset) {
+            if (! empty($asset['checksum']) && ! empty($asset['id'])) {
+                $bulkPayload[] = ['id' => $asset['id'], 'checksum' => $asset['checksum']];
+            }
+        }
+
+        $alreadyOnSource = [];
+        if (! empty($bulkPayload)) {
+            $check = $source->bulkUploadCheck($bulkPayload);
+            foreach (($check['results'] ?? []) as $result) {
+                if (($result['action'] ?? null) === 'reject' && ($result['reason'] ?? null) === 'duplicate') {
+                    $alreadyOnSource[$result['id']] = $result['assetId'] ?? null;
+                }
+            }
+            if (! empty($alreadyOnSource)) {
+                $logger->info(count($alreadyOnSource) . ' asset(s) already exist on source — linking only');
+            }
+        }
+
+        $sourceIdsToAddToAlbum = [];
+
+        foreach ($candidates as $i => $asset) {
+            $localId = $asset['id'] ?? null;
+            if ($localId === null) {
+                $report->pushedFailed++;
+                continue;
+            }
+
+            try {
+                $checksum = $asset['checksum'] ?? null;
+
+                if (isset($alreadyOnSource[$localId]) && $alreadyOnSource[$localId] !== null) {
+                    $sourceId = $alreadyOnSource[$localId];
+                    $this->upsertMapping($album->id, $sourceId, $checksum, $localId);
+                    $sourceIdsToAddToAlbum[] = $sourceId;
+                    $report->pushedDeduped++;
+
+                    continue;
+                }
+
+                $logger->info('Pushing: ' . ($asset['originalFileName'] ?? $localId), ['local_asset_id' => $localId]);
+
+                $sourceId = $this->downloadFromTargetAndUploadToSource($album, $target, $source, $asset);
+
+                if ($sourceId !== null) {
+                    $this->upsertMapping($album->id, $sourceId, $checksum, $localId);
+                    $sourceIdsToAddToAlbum[] = $sourceId;
+                    $report->pushed++;
+                }
+            } catch (\Throwable $e) {
+                $logger->error('Failed to push asset: ' . $e->getMessage(), ['local_asset_id' => $localId]);
+                $report->pushedFailed++;
+            }
+
+            if (($i + 1) % 5 === 0) {
+                $this->persistRunCounts($run, $report);
+            }
+        }
+
+        if (! empty($sourceIdsToAddToAlbum)) {
+            $logger->info('Adding ' . count($sourceIdsToAddToAlbum) . ' asset(s) to source album');
+            foreach (array_chunk(array_values(array_unique($sourceIdsToAddToAlbum)), 200) as $chunk) {
+                $source->addAssetsToSourceAlbum($chunk);
+            }
+        }
+    }
+
+    private function downloadFromTargetAndUploadToSource(Album $album, ImmichClient $target, WritableSourceBackend $source, array $asset): ?string
+    {
+        $localId = $asset['id'];
+        $tempPath = tempnam(sys_get_temp_dir(), 'imferry-push-');
+
+        if ($tempPath === false) {
+            throw new \RuntimeException('Cannot allocate temp file for push');
+        }
+
+        try {
+            $target->downloadOriginalToFile($localId, $tempPath);
+
+            $checksum = $asset['checksum'] ?? base64_encode(hash_file('sha1', $tempPath, binary: true));
+            $createdAt = $asset['fileCreatedAt'] ?? now()->toIso8601String();
+            $modifiedAt = $asset['fileModifiedAt'] ?? $createdAt;
+
+            $response = $source->uploadAsset(
+                filePath: $tempPath,
+                filename: $asset['originalFileName'] ?? ($localId . '.bin'),
+                checksumSha1: $checksum,
+                fileCreatedAt: $createdAt,
+                fileModifiedAt: $modifiedAt,
+                deviceAssetId: 'imferry-push-' . $album->id . '-' . $localId,
+                deviceId: 'imferry',
+            );
+
+            return $response['id'] ?? null;
+        } finally {
+            if (is_file($tempPath)) {
+                @unlink($tempPath);
+            }
+        }
     }
 
     private function ensureAlbum(Album $album, ImmichClient $target, RunLogger $logger): string
@@ -181,7 +319,7 @@ class SyncEngine
             try {
                 if (isset($alreadyOnTarget[$asset->remoteId]) && $alreadyOnTarget[$asset->remoteId] !== null) {
                     $localId = $alreadyOnTarget[$asset->remoteId];
-                    $this->recordMapping($album, $asset, $localId);
+                    $this->upsertMapping($album->id, $asset->remoteId, $asset->checksum, $localId);
                     $localIds[] = $localId;
                     $report->deduped++;
 
@@ -192,7 +330,7 @@ class SyncEngine
                 $localId = $this->downloadAndUpload($album, $source, $target, $asset);
 
                 if ($localId !== null) {
-                    $this->recordMapping($album, $asset, $localId);
+                    $this->upsertMapping($album->id, $asset->remoteId, $asset->checksum, $localId);
                     $localIds[] = $localId;
                     $report->uploaded++;
                 }
@@ -238,13 +376,13 @@ class SyncEngine
         }
     }
 
-    private function recordMapping(Album $album, RemoteAsset $asset, string $localAssetId): void
+    private function upsertMapping(int $albumId, string $remoteId, ?string $remoteChecksum, string $localAssetId): void
     {
-        DB::transaction(function () use ($album, $asset, $localAssetId): void {
+        DB::transaction(function () use ($albumId, $remoteId, $remoteChecksum, $localAssetId): void {
             Mapping::query()->updateOrInsert(
-                ['album_id' => $album->id, 'remote_id' => $asset->remoteId],
+                ['album_id' => $albumId, 'remote_id' => $remoteId],
                 [
-                    'remote_checksum' => $asset->checksum,
+                    'remote_checksum' => $remoteChecksum,
                     'local_asset_id' => $localAssetId,
                     'imported_at' => now(),
                 ],
@@ -302,6 +440,9 @@ class SyncEngine
             'deduped_count' => $report->deduped,
             'removed_count' => $report->removed,
             'failed_count' => $report->failed,
+            'pushed_count' => $report->pushed,
+            'pushed_deduped_count' => $report->pushedDeduped,
+            'pushed_failed_count' => $report->pushedFailed,
         ]);
     }
 }

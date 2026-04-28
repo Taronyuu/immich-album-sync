@@ -2,13 +2,24 @@
 
 namespace App\Filament\Resources\Albums\Schemas;
 
+use App\Models\Album;
+use App\Services\Exceptions\RemoteImmichConnectException;
+use App\Services\RemoteImmichConnector;
+use App\Sync\ImmichClient;
+use Filament\Actions\Action;
+use Filament\Forms\Components\Hidden;
+use Filament\Forms\Components\Placeholder;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
+use Filament\Notifications\Notification;
+use Filament\Schemas\Components\Actions;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Tabs;
 use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
+use Illuminate\Support\HtmlString;
 
 class AlbumForm
 {
@@ -52,9 +63,31 @@ class AlbumForm
                                     ->required()
                                     ->live()
                                     ->options([
-                                        'immich-shared-link' => 'Another Immich · public shared link',
-                                        'immich-api-key' => 'Another Immich · API key + album ID',
+                                        Album::SOURCE_SHARED_LINK => 'Public shared link (read-only)',
+                                        Album::SOURCE_API_KEY => 'Connected Immich account (two-way capable)',
                                     ])
+                                    ->default(Album::SOURCE_SHARED_LINK)
+                                    ->columnSpanFull(),
+
+                                Select::make('direction')
+                                    ->label('Sync direction')
+                                    ->required()
+                                    ->live()
+                                    ->default(Album::DIRECTION_PULL)
+                                    ->options([
+                                        Album::DIRECTION_PULL => 'Pull only — mirror remote into your album',
+                                        Album::DIRECTION_PUSH => 'Push only — upload your album to the remote',
+                                        Album::DIRECTION_BOTH => 'Two-way — keep both sides in sync',
+                                    ])
+                                    ->visible(fn ($get) => $get('source_type') === Album::SOURCE_API_KEY)
+                                    ->helperText(fn ($get) => match ($get('direction')) {
+                                        Album::DIRECTION_PUSH, Album::DIRECTION_BOTH => new HtmlString(
+                                            '<span class="text-warning-700 dark:text-warning-300">'
+                                            . 'Heads-up: every asset already in your target album that hasn\'t been mapped yet will be uploaded to the remote on the next run.'
+                                            . '</span>'
+                                        ),
+                                        default => null,
+                                    })
                                     ->columnSpanFull(),
 
                                 TextInput::make('source_base_url')
@@ -62,7 +95,7 @@ class AlbumForm
                                     ->url()
                                     ->required()
                                     ->placeholder('https://demo.immich.app')
-                                    ->helperText('Base URL of the Immich you are pulling from. Tip: paste the full shared-link URL here and we will split it for you.')
+                                    ->helperText('Base URL of the remote Immich. Tip: paste the full shared-link URL here and we will split it for you.')
                                     ->live(onBlur: true)
                                     ->afterStateUpdated(self::splitSharedLinkUrl(...))
                                     ->columnSpanFull(),
@@ -71,8 +104,8 @@ class AlbumForm
                                     ->label('Shared link key')
                                     ->password()
                                     ->revealable()
-                                    ->visible(fn ($get) => $get('source_type') === 'immich-shared-link')
-                                    ->required(fn ($get) => $get('source_type') === 'immich-shared-link')
+                                    ->visible(fn ($get) => $get('source_type') === Album::SOURCE_SHARED_LINK)
+                                    ->required(fn ($get) => $get('source_type') === Album::SOURCE_SHARED_LINK)
                                     ->helperText('The part after /share/ in the URL. You can also paste the full shared-link URL here.')
                                     ->live(onBlur: true)
                                     ->afterStateUpdated(self::splitSharedLinkKey(...))
@@ -82,25 +115,69 @@ class AlbumForm
                                     ->label('Shared link password')
                                     ->password()
                                     ->revealable()
-                                    ->visible(fn ($get) => $get('source_type') === 'immich-shared-link')
+                                    ->visible(fn ($get) => $get('source_type') === Album::SOURCE_SHARED_LINK)
                                     ->helperText('Only required if the link is password-protected.')
                                     ->columnSpanFull(),
 
-                                TextInput::make('source_api_key')
-                                    ->label('API key on the source Immich')
-                                    ->password()
-                                    ->revealable()
-                                    ->visible(fn ($get) => $get('source_type') === 'immich-api-key')
-                                    ->required(fn ($get) => $get('source_type') === 'immich-api-key')
-                                    ->helperText('Generate this on the source Immich (Account → API Keys) with album.read + asset.read + asset.download.')
+                                Section::make('Connect with email + password')
+                                    ->visible(fn ($get) => $get('source_type') === Album::SOURCE_API_KEY)
+                                    ->description('We round-trip your credentials to the remote Immich, provision a scoped API key, and store it encrypted. Your password is never persisted.')
+                                    ->schema([
+                                        Placeholder::make('connection_status')
+                                            ->label('Connection status')
+                                            ->content(fn ($get) => filled($get('source_account_email'))
+                                                ? new HtmlString('<span class="text-success-700 dark:text-success-300">✓ Connected as <strong>' . e($get('source_account_email')) . '</strong></span>')
+                                                : 'Not connected')
+                                            ->columnSpanFull(),
+
+                                        TextInput::make('_connect_email')
+                                            ->label('Email')
+                                            ->email()
+                                            ->dehydrated(false)
+                                            ->columnSpan(1),
+
+                                        TextInput::make('_connect_password')
+                                            ->label('Password')
+                                            ->password()
+                                            ->revealable()
+                                            ->dehydrated(false)
+                                            ->columnSpan(1),
+
+                                        Actions::make([
+                                            Action::make('connect_remote')
+                                                ->label('Connect & provision API key')
+                                                ->icon(Heroicon::OutlinedKey)
+                                                ->color('primary')
+                                                ->action(self::handleConnect(...)),
+                                        ])->columnSpanFull(),
+                                    ])
+                                    ->columns(2),
+
+                                Select::make('source_album_id')
+                                    ->label('Album on the remote Immich')
+                                    ->visible(fn ($get) => $get('source_type') === Album::SOURCE_API_KEY)
+                                    ->required(fn ($get) => $get('source_type') === Album::SOURCE_API_KEY)
+                                    ->searchable()
+                                    ->options(self::loadRemoteAlbumOptions(...))
+                                    ->helperText('Pick from albums available on the remote. If the list is empty, connect first or check the API key.')
                                     ->columnSpanFull(),
 
-                                TextInput::make('source_album_id')
-                                    ->label('Album ID on the source Immich')
-                                    ->visible(fn ($get) => $get('source_type') === 'immich-api-key')
-                                    ->required(fn ($get) => $get('source_type') === 'immich-api-key')
-                                    ->helperText('UUID of the album you want to mirror.')
-                                    ->columnSpanFull(),
+                                Hidden('source_account_email'),
+                                Hidden('source_account_user_id'),
+
+                                Section::make('Advanced: paste an existing API key')
+                                    ->visible(fn ($get) => $get('source_type') === Album::SOURCE_API_KEY)
+                                    ->collapsible()
+                                    ->collapsed()
+                                    ->schema([
+                                        TextInput::make('source_api_key')
+                                            ->label('API key on the remote Immich')
+                                            ->password()
+                                            ->revealable()
+                                            ->required(fn ($get) => $get('source_type') === Album::SOURCE_API_KEY)
+                                            ->helperText('Use this if you already have a key. The Connect button populates it for you.')
+                                            ->columnSpanFull(),
+                                    ]),
                             ])
                             ->columns(2),
 
@@ -129,6 +206,60 @@ class AlbumForm
                     ])
                     ->persistTabInQueryString(),
             ]);
+    }
+
+    private static function handleConnect(callable $get, callable $set): void
+    {
+        $baseUrl = (string) ($get('source_base_url') ?? '');
+        $email = (string) ($get('_connect_email') ?? '');
+        $password = (string) ($get('_connect_password') ?? '');
+
+        try {
+            $connection = (new RemoteImmichConnector())->connect($baseUrl, $email, $password);
+        } catch (RemoteImmichConnectException $e) {
+            Notification::make()
+                ->title('Could not connect')
+                ->body($e->getMessage())
+                ->danger()
+                ->send();
+
+            return;
+        }
+
+        $set('source_base_url', $connection->baseUrl);
+        $set('source_api_key', $connection->apiKeySecret);
+        $set('source_account_email', $connection->email);
+        $set('source_account_user_id', $connection->immichUserId);
+        $set('_connect_password', null);
+
+        Notification::make()
+            ->title('Connected')
+            ->body('Provisioned a scoped API key as ' . $connection->email . '. Pick a remote album below.')
+            ->success()
+            ->send();
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private static function loadRemoteAlbumOptions(callable $get): array
+    {
+        $baseUrl = (string) ($get('source_base_url') ?? '');
+        $apiKey = (string) ($get('source_api_key') ?? '');
+
+        if ($baseUrl === '' || $apiKey === '') {
+            return [];
+        }
+
+        try {
+            $albums = ImmichClient::withApiKey($baseUrl, $apiKey)->listMyAlbums();
+        } catch (\Throwable) {
+            return [];
+        }
+
+        return collect($albums)
+            ->mapWithKeys(fn (array $a) => [$a['id'] => $a['albumName'] ?? $a['id']])
+            ->all();
     }
 
     public static function splitSharedLinkUrl(?string $state, callable $set): void

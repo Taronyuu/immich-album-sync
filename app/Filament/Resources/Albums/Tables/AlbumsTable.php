@@ -35,8 +35,24 @@ class AlbumsTable
                     ->badge()
                     ->formatStateUsing(fn (string $state) => match ($state) {
                         'immich-shared-link' => 'Shared link',
-                        'immich-api-key' => 'API key',
+                        'immich-api-key' => 'Connected',
                         default => $state,
+                    }),
+
+                TextColumn::make('direction')
+                    ->label('Direction')
+                    ->badge()
+                    ->color(fn (?string $state) => match ($state) {
+                        'pull' => 'gray',
+                        'push' => 'warning',
+                        'both' => 'info',
+                        default => 'gray',
+                    })
+                    ->formatStateUsing(fn (?string $state) => match ($state) {
+                        'pull' => '↓ Pull',
+                        'push' => '↑ Push',
+                        'both' => '↕ Two-way',
+                        default => '↓ Pull',
                     }),
 
                 TextColumn::make('target_album_name')

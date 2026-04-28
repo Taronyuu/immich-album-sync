@@ -17,6 +17,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
     'deduped_count',
     'removed_count',
     'failed_count',
+    'pushed_count',
+    'pushed_deduped_count',
+    'pushed_failed_count',
     'error_message',
     'log',
 ])]
@@ -39,6 +42,9 @@ class JobRun extends Model
             'deduped_count' => 'integer',
             'removed_count' => 'integer',
             'failed_count' => 'integer',
+            'pushed_count' => 'integer',
+            'pushed_deduped_count' => 'integer',
+            'pushed_failed_count' => 'integer',
         ];
     }
 
@@ -88,7 +94,13 @@ class JobRun extends Model
     protected function totalProcessed(): Attribute
     {
         return Attribute::make(
-            get: fn () => $this->uploaded_count + $this->deduped_count + $this->removed_count + $this->failed_count,
+            get: fn () => $this->uploaded_count
+                + $this->deduped_count
+                + $this->removed_count
+                + $this->failed_count
+                + $this->pushed_count
+                + $this->pushed_deduped_count
+                + $this->pushed_failed_count,
         );
     }
 

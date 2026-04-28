@@ -4,7 +4,7 @@ namespace App\Sync\Sources;
 
 use App\Sync\ImmichClient;
 
-class ImmichApiKeySource extends AbstractImmichSource
+class ImmichApiKeySource extends AbstractImmichSource implements WritableSourceBackend
 {
     public function __construct(
         private readonly string $baseUrl,
@@ -24,5 +24,39 @@ class ImmichApiKeySource extends AbstractImmichSource
         foreach (($album['assets'] ?? []) as $asset) {
             yield $asset;
         }
+    }
+
+    public function bulkUploadCheck(array $items): array
+    {
+        return $this->client()->bulkUploadCheck($items);
+    }
+
+    public function uploadAsset(
+        string $filePath,
+        string $filename,
+        string $checksumSha1,
+        string $fileCreatedAt,
+        string $fileModifiedAt,
+        ?string $deviceAssetId = null,
+        ?string $deviceId = null,
+    ): array {
+        return $this->client()->uploadAsset(
+            filePath: $filePath,
+            filename: $filename,
+            checksumSha1: $checksumSha1,
+            fileCreatedAt: $fileCreatedAt,
+            fileModifiedAt: $fileModifiedAt,
+            deviceAssetId: $deviceAssetId,
+            deviceId: $deviceId,
+        );
+    }
+
+    public function addAssetsToSourceAlbum(array $assetIds): void
+    {
+        if (empty($assetIds)) {
+            return;
+        }
+
+        $this->client()->addAssetsToAlbum($this->albumId, $assetIds);
     }
 }

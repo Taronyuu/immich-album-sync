@@ -46,28 +46,44 @@ class JobRunInfolist
                             ->placeholder('—'),
                     ]),
 
-                Section::make('Counts')
+                Section::make('Pulled (remote → local)')
                     ->columns(4)
                     ->schema([
                         TextEntry::make('uploaded_count')
                             ->label('Uploaded')
-                            ->numeric()
-                            ,
+                            ->numeric(),
 
                         TextEntry::make('deduped_count')
                             ->label('Deduped')
-                            ->numeric()
-                            ,
+                            ->numeric(),
 
                         TextEntry::make('removed_count')
                             ->label('Removed')
-                            ->numeric()
-                            ,
+                            ->numeric(),
 
                         TextEntry::make('failed_count')
                             ->label('Failed')
                             ->numeric()
-                            
+                            ->color(fn (?int $state) => $state > 0 ? 'danger' : null),
+                    ]),
+
+                Section::make('Pushed (local → remote)')
+                    ->columns(3)
+                    ->visible(fn (JobRun $record): bool => $record->pushed_count > 0
+                        || $record->pushed_deduped_count > 0
+                        || $record->pushed_failed_count > 0)
+                    ->schema([
+                        TextEntry::make('pushed_count')
+                            ->label('Uploaded')
+                            ->numeric(),
+
+                        TextEntry::make('pushed_deduped_count')
+                            ->label('Deduped')
+                            ->numeric(),
+
+                        TextEntry::make('pushed_failed_count')
+                            ->label('Failed')
+                            ->numeric()
                             ->color(fn (?int $state) => $state > 0 ? 'danger' : null),
                     ]),
 
