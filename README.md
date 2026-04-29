@@ -156,17 +156,30 @@ environment:
 
 ## How authentication works
 
-When you log in:
+The login form has two paths — pick whichever fits your Immich account.
+
+**Path A — email + password** (the default)
 
 1. Immich Album Sync calls `POST /api/auth/login` on the Immich URL you provided, with your email and password.
 2. On success, a local user record is created (or fetched) keyed off `(immich_base_url, immich_user_id)`.
-3. **First login only** — `POST /api/api-keys` provisions a scoped key named *"Immich Album Sync (auto-provisioned)"* on your Immich, with these eight permissions:
-
-   `asset.upload`, `asset.read`, `asset.download`, `album.create`, `album.read`, `album.update`, `albumAsset.create`, `albumAsset.delete`
-
+3. **First login only** — `POST /api/api-keys` provisions a scoped key named *"Immich Album Sync (auto-provisioned)"* on your Immich.
 4. The API key is encrypted (AES-256, derived from your `APP_KEY`) and stored on the user record. Your password is never persisted.
 
-You can revoke the key any time from Immich's "API Keys" page. The next sync will fail with a clear message; log out and back in to provision a fresh one.
+**Path B — API key** (for OIDC users who don't have a password)
+
+If your Immich users sign in via OIDC, leave the password field blank and paste an Immich API key into the *"Or sign in with an Immich API key"* field instead. The bootstrap key needs two scopes — `user.read` (so we can confirm who you are) and `apiKey.create` (so we can provision a sync-scoped key).
+
+1. Immich Album Sync calls `GET /api/users/me` with `x-api-key: <your-key>` to validate the key and read your user info.
+2. The local user record is created the same way as Path A.
+3. **First login only** — uses your bootstrap key to call `POST /api/api-keys` and provisions the same sync-scoped key as Path A. The bootstrap key is discarded; only the freshly-provisioned key is stored.
+
+Either path ends with the same eight scopes on the stored key:
+
+`asset.upload`, `asset.read`, `asset.download`, `album.create`, `album.read`, `album.update`, `albumAsset.create`, `albumAsset.delete`
+
+The Immich URL is remembered per browser via a 30-day cookie, so you only need to type it once.
+
+You can revoke the stored key any time from Immich's "API Keys" page. The next sync will fail with a clear message; log out and back in to provision a fresh one.
 
 ---
 

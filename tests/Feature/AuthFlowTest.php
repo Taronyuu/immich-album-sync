@@ -3,8 +3,10 @@
 namespace Tests\Feature;
 
 use App\Models\User;
+use App\Services\Exceptions\RemoteImmichConnectException;
 use App\Sync\ImmichPermissions;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Http;
@@ -111,5 +113,129 @@ class AuthFlowTest extends TestCase
 
         $this->assertTrue($ok);
         $this->assertSame(1, User::query()->count());
+    }
+
+    public function test_unreachable_url_throws_unreachable_exception(): void
+    {
+        Http::fake([
+            'http://immich-server/*' => fn () => throw new ConnectionException('cURL error 7: Failed to connect'),
+        ]);
+
+        try {
+            Auth::attempt([
+                'immich_base_url' => 'http://immich-server',
+                'email' => 'alice@example.com',
+                'password' => 'whatever',
+            ]);
+            $this->fail('Expected RemoteImmichConnectException to bubble up.');
+        } catch (RemoteImmichConnectException $e) {
+            $this->assertTrue($e->isUnreachable());
+            $this->assertStringContainsString('Could not reach Immich at http://immich-server', $e->getMessage());
+        }
+
+        $this->assertSame(0, User::query()->count());
+    }
+
+    public function test_login_with_api_key_creates_user_and_provisions_sync_key(): void
+    {
+        Http::fake([
+            'https://immich.example.com/api/users/me' => Http::response([
+                'id' => 'oidc-user-uuid',
+                'email' => 'oidc@example.com',
+                'name' => 'OIDC User',
+                'isAdmin' => false,
+            ]),
+            'https://immich.example.com/api/api-keys' => Http::response([
+                'secret' => 'provisioned-sync-secret',
+                'apiKey' => [
+                    'id' => 'provisioned-id',
+                    'name' => ImmichPermissions::AUTO_PROVISION_KEY_NAME,
+                    'permissions' => ImmichPermissions::SYNC_SCOPES,
+                    'createdAt' => now()->toIso8601String(),
+                    'updatedAt' => now()->toIso8601String(),
+                ],
+            ]),
+        ]);
+
+        $ok = Auth::attempt([
+            'immich_base_url' => 'https://immich.example.com',
+            'email' => '',
+            'immich_api_key' => 'bootstrap-key-with-create-scope',
+        ]);
+
+        $this->assertTrue($ok);
+
+        $user = User::query()->firstOrFail();
+        $this->assertSame('oidc-user-uuid', $user->immich_user_id);
+        $this->assertSame('oidc@example.com', $user->immich_email);
+        $this->assertSame('provisioned-id', $user->immich_api_key_id);
+        $this->assertSame('provisioned-sync-secret', Crypt::decryptString($user->immich_api_key_encrypted));
+
+        Http::assertSent(fn ($request) => $request->url() === 'https://immich.example.com/api/users/me'
+            && $request->header('x-api-key')[0] === 'bootstrap-key-with-create-scope'
+        );
+    }
+
+    public function test_login_with_invalid_api_key_returns_false(): void
+    {
+        Http::fake([
+            'https://immich.example.com/api/users/me' => Http::response(['message' => 'Unauthorized'], 401),
+        ]);
+
+        $ok = Auth::attempt([
+            'immich_base_url' => 'https://immich.example.com',
+            'email' => '',
+            'immich_api_key' => 'totally-bogus-key',
+        ]);
+
+        $this->assertFalse($ok);
+        $this->assertSame(0, User::query()->count());
+    }
+
+    public function test_api_key_with_missing_scope_surfaces_friendly_error(): void
+    {
+        Http::fake([
+            'https://immich.example.com/api/users/me' => Http::response([
+                'id' => 'oidc-user-uuid',
+                'email' => 'oidc@example.com',
+                'name' => 'OIDC User',
+                'isAdmin' => false,
+            ]),
+            'https://immich.example.com/api/api-keys' => Http::response(['message' => 'Forbidden'], 403),
+        ]);
+
+        try {
+            Auth::attempt([
+                'immich_base_url' => 'https://immich.example.com',
+                'email' => '',
+                'immich_api_key' => 'key-without-create-scope',
+            ]);
+            $this->fail('Expected RemoteImmichConnectException for missing scope.');
+        } catch (RemoteImmichConnectException $e) {
+            $this->assertStringContainsString('apiKey.create', $e->getMessage());
+        }
+
+        $this->assertSame(0, User::query()->count());
+    }
+
+    public function test_api_key_login_with_email_mismatch_returns_false(): void
+    {
+        Http::fake([
+            'https://immich.example.com/api/users/me' => Http::response([
+                'id' => 'oidc-user-uuid',
+                'email' => 'real@example.com',
+                'name' => 'OIDC User',
+                'isAdmin' => false,
+            ]),
+        ]);
+
+        $ok = Auth::attempt([
+            'immich_base_url' => 'https://immich.example.com',
+            'email' => 'wrong@example.com',
+            'immich_api_key' => 'valid-key-but-wrong-email',
+        ]);
+
+        $this->assertFalse($ok);
+        $this->assertSame(0, User::query()->count());
     }
 }

@@ -44,12 +44,26 @@ class ImmichUserProvider implements UserProvider
     public function retrieveByCredentials(array $credentials): ?Authenticatable
     {
         $baseUrl = (string) ($credentials['immich_base_url'] ?? '');
+        $apiKey = trim((string) ($credentials['immich_api_key'] ?? ''));
         $email = (string) ($credentials['email'] ?? '');
         $password = (string) ($credentials['password'] ?? '');
 
+        if ($apiKey !== '') {
+            return $this->retrieveViaApiKey($baseUrl, $apiKey, $email);
+        }
+
+        return $this->retrieveViaPassword($baseUrl, $email, $password);
+    }
+
+    private function retrieveViaPassword(string $baseUrl, string $email, string $password): ?Authenticatable
+    {
         try {
             $loginPayload = $this->connector->login($baseUrl, $email, $password);
         } catch (RemoteImmichConnectException $e) {
+            if ($e->isUnreachable()) {
+                throw $e;
+            }
+
             Log::info('Immich login failed', [
                 'immich_base_url' => $baseUrl,
                 'email' => $email,
@@ -70,7 +84,7 @@ class ImmichUserProvider implements UserProvider
         $user->last_login_at = now();
 
         if (empty($user->immich_api_key_encrypted)) {
-            $apiKey = $this->provisioner->provision($loginPayload['baseUrl'], $loginPayload['accessToken']);
+            $apiKey = $this->provisioner->provisionWithBearerToken($loginPayload['baseUrl'], $loginPayload['accessToken']);
             $user->immich_api_key_id = $apiKey['id'];
             $user->immich_api_key = $apiKey['secret'];
         }
@@ -80,11 +94,83 @@ class ImmichUserProvider implements UserProvider
         return $user;
     }
 
+    private function retrieveViaApiKey(string $baseUrl, string $apiKey, string $email): ?Authenticatable
+    {
+        try {
+            $loginPayload = $this->connector->loginWithApiKey($baseUrl, $apiKey);
+        } catch (RemoteImmichConnectException $e) {
+            if ($e->isUnreachable()) {
+                throw $e;
+            }
+
+            Log::info('Immich API-key login failed', [
+                'immich_base_url' => $baseUrl,
+                'message' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        $remoteEmail = (string) ($loginPayload['userEmail'] ?? '');
+        $userEmail = $email !== '' ? $email : $remoteEmail;
+
+        if ($email !== '' && $remoteEmail !== '' && strcasecmp($email, $remoteEmail) !== 0) {
+            Log::info('Immich API-key login email mismatch', [
+                'immich_base_url' => $baseUrl,
+                'submitted_email' => $email,
+                'remote_email' => $remoteEmail,
+            ]);
+
+            return null;
+        }
+
+        $user = User::query()->firstOrNew([
+            'immich_base_url' => $loginPayload['baseUrl'],
+            'immich_user_id' => $loginPayload['userId'],
+        ]);
+
+        $user->immich_email = $userEmail;
+        $user->immich_user_name = $loginPayload['name'] ?? null;
+        $user->is_admin = (bool) ($loginPayload['isAdmin'] ?? false);
+        $user->last_login_at = now();
+
+        if (empty($user->immich_api_key_encrypted)) {
+            try {
+                $provisioned = $this->provisioner->provisionWithApiKey($loginPayload['baseUrl'], $apiKey);
+            } catch (\Illuminate\Http\Client\RequestException $e) {
+                $status = $e->response?->status();
+                $message = $status === 403
+                    ? 'The API key is missing the `apiKey.create` scope, so a sync-scoped key could not be provisioned.'
+                    : ($status !== null ? "Failed to provision sync API key (HTTP {$status})." : 'Failed to provision sync API key.');
+                throw new RemoteImmichConnectException($message, 0, $e);
+            }
+
+            $user->immich_api_key_id = $provisioned['id'];
+            $user->immich_api_key = $provisioned['secret'];
+        }
+
+        $user->save();
+
+        return $user;
+    }
+
     public function validateCredentials(Authenticatable $user, array $credentials): bool
     {
-        return $user instanceof User
-            && (string) $user->immich_email === (string) ($credentials['email'] ?? '')
-            && (string) $user->immich_base_url === (string) ($credentials['immich_base_url'] ?? '');
+        if (! $user instanceof User) {
+            return false;
+        }
+
+        if ((string) $user->immich_base_url !== (string) ($credentials['immich_base_url'] ?? '')) {
+            return false;
+        }
+
+        $apiKey = trim((string) ($credentials['immich_api_key'] ?? ''));
+
+        if ($apiKey !== '') {
+            return true;
+        }
+
+        return (string) $user->immich_email === (string) ($credentials['email'] ?? '');
     }
 
     public function rehashPasswordIfRequired(Authenticatable $user, array $credentials, bool $force = false): void

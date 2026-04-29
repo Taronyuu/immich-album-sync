@@ -16,6 +16,8 @@ return Application::configure(basePath: dirname(__DIR__))
                 at: $proxies === '*' ? '*' : array_map('trim', explode(',', $proxies))
             );
         }
+
+        $middleware->encryptCookies(except: ['ias_last_immich_url']);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //
