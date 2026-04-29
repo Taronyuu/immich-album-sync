@@ -17,16 +17,6 @@ class ImmichApiKeyProvisioner
         );
     }
 
-    public function provisionWithApiKey(string $baseUrl, string $apiKey): array
-    {
-        return $this->finishProvision(
-            ImmichClient::withApiKey($baseUrl, $apiKey)->createApiKey(
-                ImmichPermissions::AUTO_PROVISION_KEY_NAME,
-                ImmichPermissions::SYNC_SCOPES,
-            ),
-        );
-    }
-
     private function finishProvision(array $response): array
     {
         return [

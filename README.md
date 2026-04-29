@@ -167,15 +167,17 @@ The login form has two paths — pick whichever fits your Immich account.
 
 **Path B — API key** (for OIDC users who don't have a password)
 
-If your Immich users sign in via OIDC, leave the password field blank and paste an Immich API key into the *"Or sign in with an Immich API key"* field instead. The bootstrap key needs two scopes — `user.read` (so we can confirm who you are) and `apiKey.create` (so we can provision a sync-scoped key).
+If your Immich users sign in via OIDC, leave the password field blank and paste an Immich API key into the *"Or sign in with an Immich API key"* field instead. The key must already have the 8 sync scopes (Immich enforces that an API key cannot grant permissions it does not itself hold, so we cannot mint a child key with broader scopes).
 
 1. Immich Album Sync calls `GET /api/users/me` with `x-api-key: <your-key>` to validate the key and read your user info.
 2. The local user record is created the same way as Path A.
-3. **First login only** — uses your bootstrap key to call `POST /api/api-keys` and provisions the same sync-scoped key as Path A. The bootstrap key is discarded; only the freshly-provisioned key is stored.
+3. The key you pasted is encrypted and stored — it is used for all sync work directly. No child key is provisioned.
 
-Either path ends with the same eight scopes on the stored key:
+Required scopes on the API key:
 
 `asset.upload`, `asset.read`, `asset.download`, `album.create`, `album.read`, `album.update`, `albumAsset.create`, `albumAsset.delete`
+
+(`user.read` is also strongly recommended so login can confirm your identity, but Immich permits `/api/users/me` for any authenticated key, so it usually works without.)
 
 The Immich URL is remembered per browser via a 30-day cookie, so you only need to type it once.
 

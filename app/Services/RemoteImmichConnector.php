@@ -73,7 +73,7 @@ class RemoteImmichConnector
             $status = $e->response?->status();
             $message = match ($status) {
                 401 => 'Immich rejected the API key. Make sure you pasted the full key and that it has not been revoked.',
-                403 => 'The API key is missing required scopes. It needs `user.read` and `apiKey.create` so a sync-scoped key can be provisioned.',
+                403 => 'The API key is missing required scopes. It needs the 8 sync scopes (asset.upload/read/download, album.create/read/update, albumAsset.create/delete) plus `user.read`.',
                 default => $status !== null
                     ? "Immich API-key login failed (HTTP {$status})."
                     : 'Immich API-key login failed.',
@@ -112,20 +112,4 @@ class RemoteImmichConnector
         );
     }
 
-    public function connectWithApiKey(string $baseUrl, string $apiKey): RemoteImmichConnection
-    {
-        $login = $this->loginWithApiKey($baseUrl, $apiKey);
-
-        $key = $this->provisioner->provisionWithApiKey($login['baseUrl'], $login['bootstrapApiKey']);
-
-        return new RemoteImmichConnection(
-            baseUrl: $login['baseUrl'],
-            immichUserId: $login['userId'],
-            email: (string) ($login['userEmail'] ?? ''),
-            name: $login['name'] ?? null,
-            isAdmin: (bool) ($login['isAdmin'] ?? false),
-            apiKeyId: $key['id'],
-            apiKeySecret: $key['secret'],
-        );
-    }
 }

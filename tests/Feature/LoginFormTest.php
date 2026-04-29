@@ -99,23 +99,13 @@ class LoginFormTest extends TestCase
                 'name' => 'OIDC',
                 'isAdmin' => false,
             ]),
-            'https://immich.example.com/api/api-keys' => Http::response([
-                'secret' => 'provisioned',
-                'apiKey' => [
-                    'id' => 'provisioned-id',
-                    'name' => ImmichPermissions::AUTO_PROVISION_KEY_NAME,
-                    'permissions' => ImmichPermissions::SYNC_SCOPES,
-                    'createdAt' => '',
-                    'updatedAt' => '',
-                ],
-            ]),
         ]);
 
         Livewire::test(ImmichLogin::class)
             ->set('data.immich_base_url', 'https://immich.example.com')
             ->set('data.email', 'oidc@example.com')
             ->set('data.password', '')
-            ->set('data.immich_api_key', 'bootstrap-key')
+            ->set('data.immich_api_key', 'user-supplied-key')
             ->call('authenticate')
             ->assertHasNoErrors();
 
@@ -123,7 +113,7 @@ class LoginFormTest extends TestCase
 
         $user = User::query()->firstOrFail();
         $this->assertSame('oidc-uid', $user->immich_user_id);
-        $this->assertSame('provisioned', Crypt::decryptString($user->immich_api_key_encrypted));
+        $this->assertSame('user-supplied-key', Crypt::decryptString($user->immich_api_key_encrypted));
     }
 
     public function test_authenticate_with_invalid_api_key_shows_generic_failure(): void

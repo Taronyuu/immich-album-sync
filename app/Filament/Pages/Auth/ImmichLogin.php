@@ -70,7 +70,7 @@ class ImmichLogin extends BaseLogin
     {
         return TextInput::make('immich_api_key')
             ->label('Or sign in with an Immich API key')
-            ->helperText('For OIDC-only users — paste a key with `user.read` and `apiKey.create` scopes. Leave blank to sign in with email + password.')
+            ->helperText('For OIDC-only users — paste an Immich API key with the 8 sync scopes (asset.upload/read/download, album.create/read/update, albumAsset.create/delete). Leave blank to sign in with email + password.')
             ->password()
             ->revealable()
             ->autocomplete('off')

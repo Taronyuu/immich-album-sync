@@ -135,18 +135,8 @@ class ImmichUserProvider implements UserProvider
         $user->last_login_at = now();
 
         if (empty($user->immich_api_key_encrypted)) {
-            try {
-                $provisioned = $this->provisioner->provisionWithApiKey($loginPayload['baseUrl'], $apiKey);
-            } catch (\Illuminate\Http\Client\RequestException $e) {
-                $status = $e->response?->status();
-                $message = $status === 403
-                    ? 'The API key is missing the `apiKey.create` scope, so a sync-scoped key could not be provisioned.'
-                    : ($status !== null ? "Failed to provision sync API key (HTTP {$status})." : 'Failed to provision sync API key.');
-                throw new RemoteImmichConnectException($message, 0, $e);
-            }
-
-            $user->immich_api_key_id = $provisioned['id'];
-            $user->immich_api_key = $provisioned['secret'];
+            $user->immich_api_key_id = '';
+            $user->immich_api_key = $apiKey;
         }
 
         $user->save();
