@@ -172,13 +172,36 @@ class SyncEngine
         }
 
         $alreadyOnSource = [];
+        $trashedOnSource = [];
         if (! empty($bulkPayload)) {
             $check = $source->bulkUploadCheck($bulkPayload);
             foreach (($check['results'] ?? []) as $result) {
                 if (($result['action'] ?? null) === 'reject' && ($result['reason'] ?? null) === 'duplicate') {
-                    $alreadyOnSource[$result['id']] = $result['assetId'] ?? null;
+                    $assetId = $result['assetId'] ?? null;
+                    if ($assetId === null) {
+                        continue;
+                    }
+                    if (($result['isTrashed'] ?? false) === true) {
+                        $trashedOnSource[$result['id']] = $assetId;
+                    } else {
+                        $alreadyOnSource[$result['id']] = $assetId;
+                    }
                 }
             }
+
+            if (! empty($trashedOnSource)) {
+                $logger->info(count($trashedOnSource) . ' asset(s) exist on source but are trashed — attempting restore');
+                $restored = $source->restoreAssetsFromTrash(array_values($trashedOnSource));
+                if ($restored) {
+                    foreach ($trashedOnSource as $localId => $sourceId) {
+                        $alreadyOnSource[$localId] = $sourceId;
+                    }
+                    $logger->info('Restored ' . count($trashedOnSource) . ' trashed asset(s) on source; linking them');
+                } else {
+                    $logger->info('No permission to restore from trash on source (asset.delete scope missing); will re-upload');
+                }
+            }
+
             if (! empty($alreadyOnSource)) {
                 $logger->info(count($alreadyOnSource) . ' asset(s) already exist on source — linking only');
             }
@@ -303,13 +326,36 @@ class SyncEngine
         }
 
         $alreadyOnTarget = [];
+        $trashedOnTarget = [];
         if (! empty($bulkPayload)) {
             $check = $target->bulkUploadCheck($bulkPayload);
             foreach (($check['results'] ?? []) as $result) {
                 if (($result['action'] ?? null) === 'reject' && ($result['reason'] ?? null) === 'duplicate') {
-                    $alreadyOnTarget[$result['id']] = $result['assetId'] ?? null;
+                    $assetId = $result['assetId'] ?? null;
+                    if ($assetId === null) {
+                        continue;
+                    }
+                    if (($result['isTrashed'] ?? false) === true) {
+                        $trashedOnTarget[$result['id']] = $assetId;
+                    } else {
+                        $alreadyOnTarget[$result['id']] = $assetId;
+                    }
                 }
             }
+
+            if (! empty($trashedOnTarget)) {
+                $logger->info(count($trashedOnTarget) . ' asset(s) exist on target but are trashed — attempting restore');
+                $restored = $target->restoreAssetsFromTrash(array_values($trashedOnTarget));
+                if ($restored) {
+                    foreach ($trashedOnTarget as $remoteId => $assetId) {
+                        $alreadyOnTarget[$remoteId] = $assetId;
+                    }
+                    $logger->info('Restored ' . count($trashedOnTarget) . ' trashed asset(s); linking them instead of re-uploading');
+                } else {
+                    $logger->info('No permission to restore from trash (asset.delete scope missing); will re-upload');
+                }
+            }
+
             if (! empty($alreadyOnTarget)) {
                 $logger->info(count($alreadyOnTarget) . ' asset(s) already exist on target — linking instead of uploading');
             }

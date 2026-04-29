@@ -91,6 +91,25 @@ class ImmichClient
             ->json();
     }
 
+    public function restoreAssetsFromTrash(array $assetIds): bool
+    {
+        $response = $this->request()->post($this->url('/api/trash/restore/assets'), [
+            'ids' => array_values($assetIds),
+        ]);
+
+        if ($response->successful()) {
+            return true;
+        }
+
+        if ($response->status() === 403) {
+            return false;
+        }
+
+        $response->throw();
+
+        return false;
+    }
+
     public function downloadOriginalToFile(string $assetId, string $destinationPath): void
     {
         $response = $this->request()

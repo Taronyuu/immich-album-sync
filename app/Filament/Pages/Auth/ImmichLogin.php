@@ -113,7 +113,7 @@ class ImmichLogin extends BaseLogin
     protected function throwFailureValidationException(): never
     {
         Notification::make()
-            ->title(__('filament-panels::auth/pages/login.notifications.failed.title'))
+            ->title('Sign in failed')
             ->danger()
             ->send();
 

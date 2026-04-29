@@ -116,7 +116,7 @@ class LoginFormTest extends TestCase
         $this->assertSame('user-supplied-key', Crypt::decryptString($user->immich_api_key_encrypted));
     }
 
-    public function test_authenticate_with_invalid_api_key_shows_generic_failure(): void
+    public function test_authenticate_with_invalid_api_key_shows_specific_error_under_url_field(): void
     {
         Http::fake([
             'https://immich.example.com/api/users/me' => Http::response(['message' => 'unauthorized'], 401),
@@ -128,7 +128,7 @@ class LoginFormTest extends TestCase
             ->set('data.password', '')
             ->set('data.immich_api_key', 'bogus-key')
             ->call('authenticate')
-            ->assertHasErrors('data.email');
+            ->assertHasErrors('data.immich_base_url');
 
         $this->assertFalse(auth()->check());
     }

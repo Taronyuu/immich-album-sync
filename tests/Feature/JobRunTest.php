@@ -41,6 +41,61 @@ class JobRunTest extends TestCase
         $this->assertStringContainsString('Sync finished', $run->log);
     }
 
+    public function test_trashed_duplicates_get_restored_and_linked(): void
+    {
+        $user = $this->makeUser();
+        $album = $this->makeAlbumWith($user);
+
+        $this->mockImmichResponses(assetCount: 2, dedupResults: [
+            ['id' => 'remote-1', 'action' => 'reject', 'reason' => 'duplicate', 'assetId' => 'trashed-1', 'isTrashed' => true],
+            ['id' => 'remote-2', 'action' => 'reject', 'reason' => 'duplicate', 'assetId' => 'trashed-2', 'isTrashed' => true],
+        ], restoreResponseCode: 200);
+
+        $run = JobRun::create([
+            'album_id' => $album->id,
+            'status' => JobRun::STATUS_RUNNING,
+            'trigger' => JobRun::TRIGGER_MANUAL,
+            'started_at' => now(),
+        ]);
+
+        app(SyncEngine::class)->run($album->load('user'), $run);
+
+        $run->refresh();
+        $this->assertSame(JobRun::STATUS_SUCCEEDED, $run->status);
+        $this->assertSame(0, $run->uploaded_count);
+        $this->assertSame(2, $run->deduped_count);
+        $this->assertStringContainsString('Restored 2 trashed asset', $run->log);
+
+        Http::assertSent(fn ($r) => str_ends_with($r->url(), '/api/trash/restore/assets')
+            && in_array('trashed-1', $r->data()['ids'] ?? [], true));
+    }
+
+    public function test_trashed_duplicates_fall_back_to_upload_when_restore_forbidden(): void
+    {
+        $user = $this->makeUser();
+        $album = $this->makeAlbumWith($user);
+
+        $this->mockImmichResponses(assetCount: 2, dedupResults: [
+            ['id' => 'remote-1', 'action' => 'reject', 'reason' => 'duplicate', 'assetId' => 'trashed-1', 'isTrashed' => true],
+            ['id' => 'remote-2', 'action' => 'reject', 'reason' => 'duplicate', 'assetId' => 'trashed-2', 'isTrashed' => true],
+        ], restoreResponseCode: 403);
+
+        $run = JobRun::create([
+            'album_id' => $album->id,
+            'status' => JobRun::STATUS_RUNNING,
+            'trigger' => JobRun::TRIGGER_MANUAL,
+            'started_at' => now(),
+        ]);
+
+        app(SyncEngine::class)->run($album->load('user'), $run);
+
+        $run->refresh();
+        $this->assertSame(JobRun::STATUS_SUCCEEDED, $run->status);
+        $this->assertSame(2, $run->uploaded_count);
+        $this->assertSame(0, $run->deduped_count);
+        $this->assertStringContainsString('No permission to restore from trash', $run->log);
+    }
+
     public function test_engine_marks_run_failed_when_source_throws(): void
     {
         $user = $this->makeUser();
@@ -99,7 +154,7 @@ class JobRunTest extends TestCase
         ]);
     }
 
-    private function mockImmichResponses(int $assetCount): void
+    private function mockImmichResponses(int $assetCount, array $dedupResults = [], int $restoreResponseCode = 200): void
     {
         $assets = [];
         for ($i = 1; $i <= $assetCount; $i++) {
@@ -129,7 +184,11 @@ class JobRunTest extends TestCase
             'https://target.example.com/api/albums' => Http::response(['id' => 'target-album-id', 'albumName' => 'Target Album']),
             'https://target.example.com/api/albums/target-album-id' => Http::response(['id' => 'target-album-id']),
             'https://target.example.com/api/albums/target-album-id/assets' => Http::response([]),
-            'https://target.example.com/api/assets/bulk-upload-check' => Http::response(['results' => []]),
+            'https://target.example.com/api/assets/bulk-upload-check' => Http::response(['results' => $dedupResults]),
+            'https://target.example.com/api/trash/restore/assets' => Http::response(
+                $restoreResponseCode === 200 ? ['count' => count($dedupResults)] : ['message' => 'Forbidden'],
+                $restoreResponseCode,
+            ),
             'https://target.example.com/api/assets' => Http::sequence()
                 ->push(['id' => 'local-1', 'status' => 'created'])
                 ->push(['id' => 'local-2', 'status' => 'created'])

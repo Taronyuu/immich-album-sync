@@ -167,35 +167,43 @@ class AuthFlowTest extends TestCase
         Http::assertNotSent(fn ($request) => str_ends_with($request->url(), '/api/api-keys'));
     }
 
-    public function test_login_with_invalid_api_key_returns_false(): void
+    public function test_login_with_invalid_api_key_throws_specific_error(): void
     {
         Http::fake([
             'https://immich.example.com/api/users/me' => Http::response(['message' => 'Unauthorized'], 401),
         ]);
 
-        $ok = Auth::attempt([
-            'immich_base_url' => 'https://immich.example.com',
-            'email' => '',
-            'immich_api_key' => 'totally-bogus-key',
-        ]);
+        try {
+            Auth::attempt([
+                'immich_base_url' => 'https://immich.example.com',
+                'email' => '',
+                'immich_api_key' => 'totally-bogus-key',
+            ]);
+            $this->fail('Expected RemoteImmichConnectException for invalid api key.');
+        } catch (RemoteImmichConnectException $e) {
+            $this->assertStringContainsString('rejected the API key', $e->getMessage());
+        }
 
-        $this->assertFalse($ok);
         $this->assertSame(0, User::query()->count());
     }
 
-    public function test_api_key_login_returns_false_when_me_returns_403(): void
+    public function test_api_key_login_throws_specific_error_when_me_returns_403(): void
     {
         Http::fake([
             'https://immich.example.com/api/users/me' => Http::response(['message' => 'Forbidden'], 403),
         ]);
 
-        $ok = Auth::attempt([
-            'immich_base_url' => 'https://immich.example.com',
-            'email' => '',
-            'immich_api_key' => 'key-without-user-read',
-        ]);
+        try {
+            Auth::attempt([
+                'immich_base_url' => 'https://immich.example.com',
+                'email' => '',
+                'immich_api_key' => 'key-without-user-read',
+            ]);
+            $this->fail('Expected RemoteImmichConnectException for missing scope.');
+        } catch (RemoteImmichConnectException $e) {
+            $this->assertStringContainsString('missing required scopes', $e->getMessage());
+        }
 
-        $this->assertFalse($ok);
         $this->assertSame(0, User::query()->count());
     }
 

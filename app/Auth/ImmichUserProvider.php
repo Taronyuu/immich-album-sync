@@ -99,16 +99,12 @@ class ImmichUserProvider implements UserProvider
         try {
             $loginPayload = $this->connector->loginWithApiKey($baseUrl, $apiKey);
         } catch (RemoteImmichConnectException $e) {
-            if ($e->isUnreachable()) {
-                throw $e;
-            }
-
             Log::info('Immich API-key login failed', [
                 'immich_base_url' => $baseUrl,
                 'message' => $e->getMessage(),
             ]);
 
-            return null;
+            throw $e;
         }
 
         $remoteEmail = (string) ($loginPayload['userEmail'] ?? '');
