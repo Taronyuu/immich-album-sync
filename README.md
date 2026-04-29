@@ -74,6 +74,18 @@ Then point your `docker-compose.yml` at `image: immich-album-sync:custom` instea
 
 If you run the container under Kubernetes with `securityContext.runAsUser` set to anything other than `33`, you **must** build with matching `USER_ID` / `GROUP_ID` build args — otherwise the nginx config init will fail with `cannot create /etc/nginx/nginx.conf: Permission denied`.
 
+### Behind a reverse proxy (Kubernetes ingress, Traefik, Caddy, Cloudflare Tunnel, …)
+
+Set `TRUSTED_PROXIES` in the container env so Laravel honors the `X-Forwarded-Proto` / `X-Forwarded-Host` headers your proxy sends. Without it, the panel loads but Filament's CSS and JS get generated with the wrong scheme (`http://` on an `https://` page → mixed-content blocked) or the wrong host, and you'll see the login page rendered as unstyled HTML.
+
+```yaml
+environment:
+  APP_URL: https://immich-sync.example.com
+  TRUSTED_PROXIES: "*"
+```
+
+`*` trusts every upstream proxy — safe inside a private network (Kubernetes cluster, your home LAN). For stricter control, list CIDR ranges instead: `TRUSTED_PROXIES: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"`. Make sure `APP_URL` matches the **external** URL you actually browse to (scheme included).
+
 ---
 
 ## Run on TrueNAS as a Custom App
