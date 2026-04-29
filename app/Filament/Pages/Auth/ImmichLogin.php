@@ -73,7 +73,8 @@ class ImmichLogin extends BaseLogin
             ->helperText('For OIDC-only users — paste a key with `user.read` and `apiKey.create` scopes. Leave blank to sign in with email + password.')
             ->password()
             ->revealable()
-            ->autocomplete('off');
+            ->autocomplete('off')
+            ->live(onBlur: true);
     }
 
     public function authenticate(): ?LoginResponse
